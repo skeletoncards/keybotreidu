@@ -62,7 +62,6 @@ function buildPanel() {
             "› Paste it into the script loader\n\n" +
             "**Rules:**\n" +
             "› Keys last **24 hours** then expire\n" +
-            "› Keys are **one-time use** — used when the script loads\n" +
             "› Each key is **tied to your Roblox account**\n" +
             "› Do **not** share your key\n\n" +
             "**Finding your Roblox ID:**\n" +
@@ -84,14 +83,11 @@ function buildPanel() {
 }
 
 // ── Post/refresh the panel in KEY_CHANNEL ─────────────────────
-// Finds an existing bot message and edits it, or sends a new one.
-// Call this with !refreshpanel as admin, or on bot start.
 async function refreshPanel(guild) {
     if (!KEY_CHANNEL) return console.warn("[Bot] KEY_CHANNEL not set.");
     const channel = await guild.channels.fetch(KEY_CHANNEL).catch(() => null);
     if (!channel) return console.warn("[Bot] KEY_CHANNEL not found.");
 
-    // Look for existing panel message from this bot
     const messages = await channel.messages.fetch({ limit: 20 });
     const existing = messages.find(
         m => m.author.id === client.user.id && m.embeds.length > 0
@@ -109,11 +105,8 @@ async function refreshPanel(guild) {
 
 // ── Handle button click → show modal ─────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
-
-    // ── Button: Get Key ───────────────────────────────────────
     if (interaction.isButton() && interaction.customId === "get_key") {
 
-        // Role check
         if (!hasRole(interaction.member, ALLOWED_ROLE)) {
             return interaction.reply({
                 embeds: [new EmbedBuilder()
@@ -124,7 +117,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             });
         }
 
-        // Show modal asking for Roblox ID
         const modal = new ModalBuilder()
             .setCustomId("key_modal")
             .setTitle("Get Your Script Key");
@@ -138,10 +130,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .setMaxLength(20)
             .setRequired(true);
 
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(robloxInput)
-        );
-
+        modal.addComponents(new ActionRowBuilder().addComponents(robloxInput));
         return interaction.showModal(modal);
     }
 });
@@ -155,7 +144,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const robloxId = interaction.fields.getTextInputValue("roblox_id").trim();
 
-    // Validate: must be numeric
     if (!/^\d+$/.test(robloxId)) {
         return interaction.editReply({
             embeds: [new EmbedBuilder()
@@ -170,17 +158,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     try {
-        const data = await generateKey(
-            robloxId,
-            interaction.user.id,
-            interaction.user.tag
-        );
+        const data = await generateKey(robloxId, interaction.user.id, interaction.user.tag);
 
-        // Already has an active key
+        // Already has an active key — re-DM it
         if (!data.success && data.reason === "already_active") {
             const remaining = data.expiresAt - Date.now();
 
-            // Re-DM them their existing key
             const dmEmbed = new EmbedBuilder()
                 .setColor(0xFFC107)
                 .setTitle("⚠️ You already have an active key")
@@ -207,7 +190,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             });
         }
 
-        // Generation failed for another reason
         if (!data.success) {
             return interaction.editReply({
                 embeds: [new EmbedBuilder()
@@ -227,8 +209,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 "**Paste this into the script loader when prompted:**\n" +
                 `\`\`\`\n${data.key}\n\`\`\`\n` +
                 `⏰ **Expires in:** ${expiresIn}\n` +
-                `🔒 **Roblox ID:** \`${robloxId}\`\n` +
-                `🎲 **One-time use** — consumed when the script loads\n\n` +
+                `🔒 **Roblox ID:** \`${robloxId}\`\n\n` +
                 "⚠️ **Do not share this key — it is bound to your Roblox account.**\n" +
                 "After it expires, just press **Get Key** again in the Discord."
             )
@@ -302,7 +283,7 @@ client.on(Events.MessageCreate, async (msg) => {
 
         const lines = keys.map(e => {
             const rem = Math.max(0, e.expiresAt - Date.now());
-            return `\`${e.userId}\` | ${e.discordTag} | ${e.used ? "✅ used" : `⏳ ${msToHMS(rem)} left`}`;
+            return `\`${e.userId}\` | ${e.discordTag} | ⏳ ${msToHMS(rem)} left | verified ${e.verifyCount || 0}x`;
         });
 
         const embed = new EmbedBuilder()
@@ -318,7 +299,6 @@ client.on(Events.MessageCreate, async (msg) => {
 client.once(Events.ClientReady, async () => {
     console.log(`[Bot] Logged in as ${client.user.tag}`);
 
-    // Auto-post panel in all guilds on startup
     for (const guild of client.guilds.cache.values()) {
         await refreshPanel(guild).catch(console.error);
     }
