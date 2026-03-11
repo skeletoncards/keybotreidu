@@ -8,21 +8,46 @@ app.use(express.json());
 const DB_FILE      = "./keys.json";
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "change_me";
 
+// ── In-memory store as primary (survives file write failures) ──
+// On Render free tier the filesystem resets on restart, so we keep
+// the live DB in memory and only use the file as a cold-start cache.
+let memDB = {};
+
 function loadDB() {
-    if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, "{}");
-    return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+    // First call: hydrate from file if it exists
+    if (Object.keys(memDB).length === 0) {
+        try {
+            if (fs.existsSync(DB_FILE)) {
+                const parsed = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+                memDB = parsed;
+            }
+        } catch (e) {
+            console.warn("[DB] Could not read keys.json:", e.message);
+        }
+    }
+    return memDB;
 }
 
 function saveDB(data) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    memDB = data;
+    // Best-effort file write (will fail silently on read-only / ephemeral FS)
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    } catch (e) {
+        console.warn("[DB] Could not persist keys.json (ephemeral FS?):", e.message);
+    }
 }
 
 function cleanExpired(db) {
     const now = Date.now();
+    let changed = false;
     for (const key in db) {
-        if (db[key].expiresAt < now) delete db[key];
+        if (db[key].expiresAt < now) {
+            delete db[key];
+            changed = true;
+        }
     }
-    saveDB(db);
+    if (changed) saveDB(db);
     return db;
 }
 
@@ -40,7 +65,7 @@ app.post("/generate", (req, res) => {
     let db = loadDB();
     db = cleanExpired(db);
 
-    // Check for existing active key for this userId
+    // Return existing active key if present
     const existing = Object.values(db).find(
         e => e.userId === String(userId) && e.expiresAt > Date.now()
     );
@@ -61,8 +86,8 @@ app.post("/generate", (req, res) => {
         userId:     String(userId),
         discordId:  String(discordId),
         discordTag: discordTag || "unknown",
-        used:       false,
-        usedAt:     null,
+        verifyCount: 0,
+        lastVerified: null,
         createdAt:  Date.now(),
         expiresAt
     };
@@ -73,6 +98,9 @@ app.post("/generate", (req, res) => {
 
 // ── Verify (called by Lua script) ─────────────────────────────
 // POST /verify { key, userId }
+// Keys are valid for their full 24h window and can be re-verified
+// (e.g. after executor reset or session file loss). They are still
+// userId-bound so sharing a key with someone else won't work.
 app.post("/verify", (req, res) => {
     const { key, userId } = req.body;
     if (!key || !userId)
@@ -84,19 +112,19 @@ app.post("/verify", (req, res) => {
     const entry = db[key];
     if (!entry)
         return res.json({ valid: false, reason: "Key not found or expired" });
+
     if (entry.userId !== String(userId))
-        return res.json({ valid: false, reason: "Key not registered to this user" });
-    if (entry.used)
-        return res.json({ valid: false, reason: "Key already used" });
+        return res.json({ valid: false, reason: "not registered to this user" });
+
     if (entry.expiresAt < Date.now()) {
         delete db[key];
         saveDB(db);
-        return res.json({ valid: false, reason: "Key expired" });
+        return res.json({ valid: false, reason: "expired" });
     }
 
-    // One-time use — mark it
-    db[key].used   = true;
-    db[key].usedAt = Date.now();
+    // Track usage for logging — but never block re-verification
+    db[key].verifyCount  = (db[key].verifyCount || 0) + 1;
+    db[key].lastVerified = Date.now();
     saveDB(db);
 
     return res.json({ valid: true, expiresAt: entry.expiresAt });
