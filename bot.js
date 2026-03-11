@@ -105,10 +105,11 @@ async function refreshPanel(guild) {
 
 // ── Handle button click → show modal ─────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
-    if (interaction.isButton() && interaction.customId === "get_key") {
+    if (!interaction.isButton() || interaction.customId !== "get_key") return;
 
+    try {
         if (!hasRole(interaction.member, ALLOWED_ROLE)) {
-            return interaction.reply({
+            return await interaction.reply({
                 embeds: [new EmbedBuilder()
                     .setColor(0xDC3545)
                     .setDescription("❌ You don't have the required role to get a key.")
@@ -131,7 +132,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .setRequired(true);
 
         modal.addComponents(new ActionRowBuilder().addComponents(robloxInput));
-        return interaction.showModal(modal);
+        await interaction.showModal(modal);
+    } catch (e) {
+        // Interaction expired (Discord's 3s window) — log and move on, do not crash
+        console.warn("[Bot] Button interaction expired before response:", e.message);
     }
 });
 
@@ -140,7 +144,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isModalSubmit()) return;
     if (interaction.customId !== "key_modal") return;
 
-    await interaction.deferReply({ ephemeral: true });
+    try {
+        await interaction.deferReply({ ephemeral: true });
+    } catch (e) {
+        console.warn("[Bot] Modal interaction expired before defer:", e.message);
+        return;
+    }
 
     const robloxId = interaction.fields.getTextInputValue("roblox_id").trim();
 
@@ -302,6 +311,15 @@ client.once(Events.ClientReady, async () => {
     for (const guild of client.guilds.cache.values()) {
         await refreshPanel(guild).catch(console.error);
     }
+});
+
+// ── Global crash guard (catches expired interactions and other async errors) ──
+process.on("unhandledRejection", (err) => {
+    if (err && err.code === 10062) {
+        console.warn("[Bot] Interaction expired (10062) — ignoring.");
+        return;
+    }
+    console.error("[Bot] Unhandled rejection:", err);
 });
 
 client.login(BOT_TOKEN);
