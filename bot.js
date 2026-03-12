@@ -323,6 +323,20 @@ process.on("unhandledRejection", (err) => {
     console.error("[Bot] Unhandled rejection:", err);
 });
 
+// ── Self-ping to prevent Render free tier from sleeping ──────────────────────
+// Set SERVICE_URL env var to your Render URL e.g. https://your-bot.onrender.com
+const SELF_URL = process.env.SERVICE_URL;
+if (SELF_URL) {
+    setInterval(() => {
+        fetch(SELF_URL)
+            .then(() => console.log("[Bot] Self-ping OK"))
+            .catch(e => console.warn("[Bot] Self-ping failed:", e.message));
+    }, 14 * 60 * 1000); // every 14 minutes
+    console.log("[Bot] Self-ping enabled →", SELF_URL);
+} else {
+    console.warn("[Bot] SERVICE_URL not set — bot may sleep on Render free tier.");
+}
+
 // ── Keep-alive HTTP server (required by Render to pass health checks) ────────
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => res.end("reidu bot online")).listen(PORT, () => {
