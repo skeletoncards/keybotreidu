@@ -5,6 +5,7 @@ const {
     Events, PermissionFlagsBits
 } = require("discord.js");
 const fetch = require("node-fetch");
+const http  = require("http");
 
 const BOT_TOKEN    = process.env.BOT_TOKEN;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "change_me";
@@ -320,6 +321,12 @@ process.on("unhandledRejection", (err) => {
         return;
     }
     console.error("[Bot] Unhandled rejection:", err);
+});
+
+// ── Keep-alive HTTP server (required by Render to pass health checks) ────────
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => res.end("reidu bot online")).listen(PORT, () => {
+    console.log(`[Bot] Health check server listening on :${PORT}`);
 });
 
 client.login(BOT_TOKEN);
